@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smutica - Story Manager</title>
+    <style>
+        :root {
+            --primary: #ff6b6b;
+            --background: #ffffff;
+            --text: #333333;
+            --surface: #f8f9fa;
+        }
+
+        [data-theme="dark"] {
+            --background: #1a1a1a;
+            --text: #ffffff;
+            --surface: #2d2d2d;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: var(--background);
+            color: var(--text);
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            gap: 2rem;
+            margin-top: 2rem;
+        }
+
+        .story-list {
+            background: var(--surface);
+            padding: 1rem;
+            border-radius: 8px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .story-item {
+            padding: 0.5rem;
+            margin-bottom: 0.5rem;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .story-item:hover {
+            background: rgba(0,0,0,0.05);
+        }
+
+        .story-item.active {
+            background: var(--primary);
+            color: white;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: bold;
+        }
+
+        input[type="text"],
+        textarea {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 1rem;
+            background: var(--background);
+            color: var(--text);
+        }
+
+        textarea {
+            min-height: 100px;
+        }
+
+        button {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .chapter {
+            background: var(--surface);
+            padding: 1rem;
+            margin-bottom: 1rem;
+            border-radius: 4px;
+        }
+
+        .status-message {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 1rem;
+            border-radius: 4px;
+            display: none;
+            z-index: 1000;
+        }
+
+        .status-message.success {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .status-message.error {
+            background: #f44336;
+            color: white;
+        }
+
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.7);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            color: white;
+            font-size: 1.2rem;
+        }
+
+        .theme-toggle {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+        }
+
+        .delete-button {
+            background: #dc3545;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading" class="loading-overlay">
+        <div>Updating stories.json...</div>
+    </div>
+    
+    <div id="status" class="status-message"></div>
+    
+    <button onclick="toggleTheme()" class="theme-toggle" id="theme-toggle">🌓</button>
+
+    <h1>Smutica - Story Manager</h1>
+
+    <div class="dashboard">
+        <div class="story-list">
+            <h3>Stories</h3>
+            <button onclick="newStory()">+ New Story</button>
+            <div id="stories"></div>
+        </div>
+
+        <form id="storyForm" onsubmit="saveStory(event)">
+            <div class="form-group">
+                <label for="title">Story Title *</label>
+                <input type="text" id="title" required>
+            </div>
+
+            <div class="form-group">
+                <label for="cover">Cover Image URL</label>
+                <input type="text" id="cover" placeholder="https://...">
+            </div>
+
+            <div class="form-group">
+                <label for="description">Description *</label>
+                <textarea id="description" required></textarea>
+            </div>
+
+            <div class="form-group">
+                <label for="tags">Tags (comma-separated)</label>
+                <input type="text" id="tags" placeholder="fantasy, mystery">
+            </div>
+
+            <div id="chapters">
+                <h3>Chapters</h3>
+            </div>
+
+            <button type="button" onclick="addChapter()">+ Add Chapter</button>
+            <button type="submit">Save Story</button>
+            <button type="button" class="delete-button" onclick="deleteStory()" id="deleteButton" style="display: none;">Delete Story</button>
+        </form>
+    </div>
+
+    <script>
+        // GitHub Configuration
+        const GITHUB_TOKEN = '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';
+        const REPO_OWNER = 'zeuxyyyy';
+        const REPO_NAME = 'smutica';
+        const GITHUB_API = 'https://api.github.com';
+        const CURRENT_TIME = "2025-06-09T04:31:20Z";
+
+        let stories = [];
+        let currentStory = null;
+        let fileSha = null;
+
+        // Theme management
+        function toggleTheme() {
+            const isDark = document.body.getAttribute('data-theme') === 'dark';
+            document.body.setAttribute('data-theme', isDark ? 'light' : 'dark');
+            localStorage.setItem('admin-theme', isDark ? 'light' : 'dark');
+            document.getElementById('theme-toggle').textContent = isDark ? '🌓' : '🌙';
+        }
+
+        const savedTheme = localStorage.getItem('admin-theme') || 'light';
+        document.body.setAttribute('data-theme', savedTheme);
+        document.getElementById('theme-toggle').textContent = savedTheme === 'dark' ? '🌙' : '🌓';
+
+        function showStatus(message, type = 'success') {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = `status-message ${type}`;
+            status.style.display = 'block';
+            setTimeout(() => status.style.display = 'none', 3000);
+        }
+
+        function showLoading(show = true) {
+            document.getElementById('loading').style.display = show ? 'flex' : 'none';
+        }
+
+        async function githubRequest(endpoint, method = 'GET', body = null) {
+            try {
+                const headers = {
+                    'Authorization': `Bearer ${GITHUB_TOKEN}`,
+                    'Accept': 'application/vnd.github.v3+json',
+                    'X-GitHub-Api-Version': '2022-11-28'
+                };
+
+                if (body) {
+                    headers['Content-Type'] = 'application/json';
+                }
+
+                const response = await fetch(`${GITHUB_API}${endpoint}`, {
+                    method,
+                    headers,
+                    body: body ? JSON.stringify(body) : null
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(`GitHub API error: ${response.status} - ${errorData.message || response.statusText}`);
+                }
+
+                return response.json();
+            } catch (error) {
+                console.error('GitHub API Request failed:', error);
+                throw error;
+            }
+        }
+
+        async function initialize() {
+            try {
+                showLoading(true);
+                const response = await githubRequest(`/repos/${REPO_OWNER}/${REPO_NAME}/contents/stories.json`);
+                fileSha = response.sha;
+                
+                const content = JSON.parse(atob(response.content));
+                stories = content.stories || [];
+                renderStoryList();
+                showStatus('Stories loaded successfully');
+            } catch (error) {
+                console.error('Error loading stories:', error);
+                showStatus('Error loading stories: ' + error.message, 'error');
+            } finally {
+                showLoading(false);
+            }
+            addChapter();
+        }
+
+        async function saveToGitHub() {
+            try {
+                showLoading(true);
+                const content = JSON.stringify({ stories }, null, 2);
+                const contentEncoded = btoa(unescape(encodeURIComponent(content)));
+
+                const response = await githubRequest(`/repos/${REPO_OWNER}/${REPO_NAME}/contents/stories.json`, 'PUT', {
+                    message: `Update stories.json - ${CURRENT_TIME}`,
+                    content: contentEncoded,
+                    sha: fileSha
+                });
+
+                fileSha = response.content.sha;
+                return true;
+            } catch (error) {
+                console.error('Error saving to GitHub:', error);
+                showStatus('Error saving to GitHub: ' + error.message, 'error');
+                throw error;
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        function renderStoryList() {
+            const container = document.getElementById('stories');
+            container.innerHTML = stories.map(story => `
+                <div class="story-item ${currentStory?.id === story.id ? 'active' : ''}"
+                     onclick="editStory('${story.id}')">
+                    ${story.title}
+                </div>
+            `).join('');
+        }
+
+        function newStory() {
+            currentStory = null;
+            document.getElementById('storyForm').reset();
+            document.getElementById('deleteButton').style.display = 'none';
+            document.getElementById('chapters').innerHTML = '<h3>Chapters</h3>';
+            addChapter();
+            renderStoryList();
+        }
+
+        function editStory(storyId) {
+            currentStory = stories.find(s => s.id === storyId);
+            if (!currentStory) return;
+
+            document.getElementById('title').value = currentStory.title;
+            document.getElementById('cover').value = currentStory.cover;
+            document.getElementById('description').value = currentStory.description;
+            document.getElementById('tags').value = currentStory.tags.join(', ');
+            
+            document.getElementById('chapters').innerHTML = '<h3>Chapters</h3>';
+            currentStory.chapters.forEach(chapter => addChapter(chapter));
+            
+            document.getElementById('deleteButton').style.display = 'inline-block';
+            renderStoryList();
+        }
+
+        function addChapter(chapter = null) {
+            const container = document.createElement('div');
+            container.className = 'chapter';
+            container.innerHTML = `
+                <div class="form-group">
+                    <label>Chapter Title *</label>
+                    <input type="text" class="chapter-title" required value="${chapter?.title || ''}">
+                </div>
+                <div class="form-group">
+                    <label>Chapter Content *</label>
+                    <textarea class="chapter-content" required>${chapter?.content || ''}</textarea>
+                </div>
+                <button type="button" class="delete-button" onclick="this.parentElement.remove()">Delete Chapter</button>
+            `;
+            document.getElementById('chapters').appendChild(container);
+        }
+
+        async function saveStory(event) {
+            event.preventDefault();
+            
+            const story = {
+                id: currentStory?.id || document.getElementById('title').value
+                    .toLowerCase()
+                    .replace(/[^a-z0-9]+/g, '-')
+                    .replace(/^-+|-+$/g, ''),
+                title: document.getElementById('title').value,
+                description: document.getElementById('description').value,
+                cover: document.getElementById('cover').value || 'https://placekitten.com/300/400',
+                tags: document.getElementById('tags').value
+                    .split(',')
+                    .map(tag => tag.trim())
+                    .filter(tag => tag),
+                createdAt: currentStory?.createdAt || CURRENT_TIME,
+                chapters: []
+            };
+
+            const chapters = document.getElementsByClassName('chapter');
+            for (let chapter of chapters) {
+                const title = chapter.querySelector('.chapter-title').value;
+                const content = chapter.querySelector('.chapter-content').value;
+                if (title && content) {
+                    story.chapters.push({ title, content });
+                }
+            }
+
+            try {
+                const index = stories.findIndex(s => s.id === story.id);
+                if (index !== -1) {
+                    stories[index] = story;
+                } else {
+                    stories.push(story);
+                }
+
+                await saveToGitHub();
+                currentStory = story;
+                renderStoryList();
+                showStatus('Story saved successfully');
+            } catch (error) {
+                showStatus('Failed to save story: ' + error.message, 'error');
+            }
+        }
+
+        async function deleteStory() {
+            if (!currentStory || !confirm('Are you sure you want to delete this story?')) return;
+
+            try {
+                showLoading(true);
+                stories = stories.filter(s => s.id !== currentStory.id);
+                await saveToGitHub();
+                newStory();
+                showStatus('Story deleted successfully');
+            } catch (error) {
+                showStatus('Failed to delete story: ' + error.message, 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // Initialize the app
+        initialize();
+    </script>
+</body>
+</html>
